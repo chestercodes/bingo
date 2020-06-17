@@ -1,0 +1,45 @@
+group Server
+    source https://api.nuget.org/v3/index.json
+    framework: netcoreapp3.0
+    storage: none
+
+nuget Akka
+nuget Akka.FSharp
+nuget Akka.Remote
+    nuget FSharp.Core
+    nuget Giraffe
+    nuget Thoth.Json.Giraffe
+    nuget Microsoft.ApplicationInsights.AspNetCore
+    nuget WindowsAzure.Storage
+
+group Client
+    source https://api.nuget.org/v3/index.json
+    framework: netstandard2.0
+    storage: none
+
+nuget Fable.Browser.Navigator
+nuget Fable.Browser.Url
+    nuget Fable.Core ~> 3
+    nuget Fable.Elmish ~> 3
+    nuget Fable.Elmish.Debugger ~> 3
+    nuget Fable.Elmish.HMR ~> 4
+    nuget Fable.Elmish.React ~> 3
+    nuget Thoth.Fetch ~> 2
+    nuget Fable.React ~> 5
+    nuget Fulma ~> 2
+    nuget Fable.FontAwesome.Free ~> 2
+
+group Build
+    source https://api.nuget.org/v3/index.json
+    framework: netstandard2.0
+    storage: none
+
+    nuget FSharp.Core
+    nuget Fake.Core.ReleaseNotes
+    nuget Fake.Core.Target
+    nuget Fake.DotNet.Cli
+    nuget Fake.IO.FileSystem
+    nuget Fake.Core.Environment
+    nuget Fake.Core.Trace
+    nuget Fake.IO.Zip
+    github CompositionalIT/fshelpers src/FsHelpers/ArmHelper/ArmHelper.fs

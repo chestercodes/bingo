@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <DefineConstants>FABLE_COMPILER</DefineConstants>
+    </PropertyGroup>
+    <ItemGroup>
+      <EmbeddedResource Remove="scripts\**" />
+    </ItemGroup>
+    <ItemGroup>
+        <None Include="index.html" />
+        <None Include="paket.references" />
+        <None Include="style.scss" />
+        <Compile Include="AboveShared.fs" />
+        <Compile Include="..\Shared\Shared.fs" />
+        <Compile Include="Fable.Import.SignalR.fs" />
+        <Compile Include="JoiningGroup.fs" />
+        <Compile Include="Group.fs" />
+        <Compile Include="BingoGame.fs" />
+        <Compile Include="ModelUpdate.fs" />
+        <Compile Include="ServerResponse.fs" />
+        <Compile Include="GroupView.fs" />
+        <Compile Include="PlayView.fs" />
+        <Compile Include="Views.fs" />
+        <Compile Include="Client.fs" />
+    </ItemGroup>
+    <ItemGroup>
+      <None Include="public\signalr.js" />
+      <None Include="public\signalr.js.map" />
+      <None Include="public\signalr.min.js" />
+      <None Include="public\signalr.min.js.map" />
+      <Content Include="public\favicon.png" />
+    </ItemGroup>
+    <Import Project="..\..\.paket\Paket.Restore.targets" />
+</Project>

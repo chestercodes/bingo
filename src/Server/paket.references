@@ -1,0 +1,9 @@
+group Server
+FSharp.Core
+Giraffe
+Microsoft.ApplicationInsights.AspNetCore
+WindowsAzure.Storage
+Thoth.Json.Giraffe
+Akka
+Akka.Remote
+Akka.FSharp

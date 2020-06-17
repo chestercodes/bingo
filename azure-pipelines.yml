@@ -1,0 +1,32 @@
+trigger:
+- master
+
+pool:
+  vmImage: 'ubuntu-16.04'
+
+steps:
+- task: NuGetToolInstaller@1
+
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: 'dotnet tool restore'
+
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: 'dotnet fake build --target Bundle'
+  env:
+    BUILD_ID: 'latest'
+
+- task: Docker@2
+  inputs:
+    containerRegistry: 'chestercodesDockerHub'
+    command: 'login'
+
+- task: Docker@2
+  inputs:
+    containerRegistry: 'chestercodesDockerHub'
+    repository: 'games-room'
+    command: 'buildAndPush'
+    Dockerfile: 'Dockerfile'

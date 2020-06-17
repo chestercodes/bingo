@@ -1,0 +1,135 @@
+@charset "utf-8";
+
+// FontAwesome
+$fa_font_path: "~@fortawesome/fontawesome-free/webfonts";
+@import '~@fortawesome/fontawesome-free/scss/fontawesome.scss';
+@import '~@fortawesome/fontawesome-free/scss/regular.scss';
+@import '~@fortawesome/fontawesome-free/scss/solid.scss';
+@import '~@fortawesome/fontawesome-free/scss/brands.scss';
+
+// OpenSans
+$FontPathOpenSans: "~open-sans-fonts/open-sans";
+@import '~open-sans-fonts/open-sans';
+$family-primary: 'Open Sans';
+
+// Bulma
+@import "~bulma/bulma";
+
+html, body {
+  font-family: "Open Sans", serif;
+}
+
+.hero {
+  &.is-primary {
+    background: linear-gradient(grey, black);
+    -webkit-background-size: cover;
+    -moz-background-size: cover;
+    -o-background-size: cover;
+    background-size: cover;
+  }
+
+  .nav, &.is-success .nav {
+    -webkit-box-shadow: none;
+    box-shadow: none;
+  }
+
+  .subtitle {
+    padding: 3rem 0;
+    line-height: 1.5;
+  }
+}
+
+.copy-group-url {
+  font-size: 1px;
+  color: white;
+}
+
+.bingo-cell-outer {
+  display: inline-flex;
+  font-size: 3em;
+  padding: 5px;
+}
+
+@mixin bingo-cell($cellType, $col) {
+  .bingo-cell-#{$cellType} {
+    color: $col;
+    padding: 10px;
+    border: 2px solid $col;
+    border-radius: 20px;
+    text-align: center;
+    min-width: 2em;
+  }
+}
+
+@include bingo-cell("unselected", red);
+@include bingo-cell("user", blue);
+@include bingo-cell("game", black);
+@include bingo-cell("both", green);
+
+@include bingo-cell("highlighted", purple);
+
+.bingo-cell-span {
+  align-items: center;
+}
+
+.bingo-card {
+  padding: 10px;
+}
+
+@mixin player-start($playerType, $col) {
+  .player-start-#{$playerType} {
+    color: $col;
+    padding: 10px;
+    border: 2px solid $col;
+    border-radius: 20px;
+  }
+}
+
+@include player-start("haschosen", green);
+@include player-start("choosing", red);
+
+.player-start-summary {
+  padding: 10px;
+  display: inline-flex;
+}
+
+.winners-title {
+  font-size: 1.5em;
+}
+
+.winners-list-item {
+  font-size: 2em;
+}
+
+.winners {
+  padding: 10px;
+  border: 2px solid black;
+  border-radius: 20px;
+  text-align: center;
+  
+}
+
+.bingo-instructions {
+  padding: 10px;
+  border: 2px solid black;
+  border-radius: 20px;
+  text-align: center;
+}
+
+.bingo-call {
+  padding: 10px;
+  border: 2px solid black;
+  border-radius: 20px;
+  text-align: center;
+}
+
+.play-instructions {
+  padding: 10px;
+  border: 2px solid black;
+  border-radius: 20px;
+  text-align: center;
+}
+
+.group-players {
+  color: black;
+}
