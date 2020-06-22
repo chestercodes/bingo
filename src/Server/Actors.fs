@@ -55,8 +55,6 @@ module ClientResponderActor =
                     loop()
             )
 
-let intersect list1 list2 = Set.intersect (Set.ofList list1) (Set.ofList list2) |> Set.toList
-
 let logValue = true
 let log data = if logValue then printfn "%A" data
 
@@ -92,6 +90,7 @@ module GameActor =
         | PlayerChosenNumbers of UnvalidatedPlayersChoices
         | StartPullingNumbers
         | PullNumber
+        | ClaimWin
     
     type Msg =
         | AddPlayer of Player
@@ -146,7 +145,6 @@ module GameActor =
                 let unpulledNumbers: int Set = gameNumbers - pulledNumbers
                 let n: int = r.GetOneElement (Set.toList unpulledNumbers)
                 n
-                //if pulledNumbers |> List.contains n then getNumberNotAlreadyChosen pulledNumbers else n
             
             let tellClientResponder conId msg = clientResponderActor <! (msg |> ClientResponderActor.toMsg conId)
 
@@ -217,6 +215,11 @@ module GameActor =
                 match winners with
                 | [] -> NobodyHasWonYet
                 | winners -> WeHaveAWinner winners
+            
+            let playerFromSourceOrNone source =
+                match source with
+                | GameMsgSource.Internal -> None
+                | GameMsgSource.FromPlayer playerSource -> playerSource |> Some
 
             let bingoMsg msg (state: State) (gameMsg: MsgEnv) =
                 match state.GameState with
@@ -263,17 +266,24 @@ module GameActor =
                         let chosenNumber = getNumberNotAlreadyChosen pulledNumbers gameNumbers
                         let newPulledNumbers = pulledNumbers.Add chosenNumber
                         
-                        match playerNumbers, newPulledNumbers with
-                        | NobodyHasWonYet ->
-                            tellAllPlayersAboutPulledNumber chosenNumber newPulledNumbers state.Players
-                            let newState = (newPulledNumbers |> PulledNumbers, playerNumbers, gameNumbers) |> Playing |> PlayingBingo
-                            { state with GameState = newState }
-
+                        tellAllPlayersAboutPulledNumber chosenNumber newPulledNumbers state.Players
+                        let newState = (newPulledNumbers |> PulledNumbers, playerNumbers, gameNumbers) |> Playing |> PlayingBingo
+                        { state with GameState = newState }
+                            
+                    | Playing (PulledNumbers pulledNumbers, playerNumbers, gameNumbers), ClaimWin ->
+                        match playerNumbers, pulledNumbers with
+                        | NobodyHasWonYet -> writeError "Win claimed when no player has won" gameMsg state ; state
                         | WeHaveAWinner winners ->
-                            tellAllPlayersAboutWinners winners newPulledNumbers state.Players
-                            let finished = (PulledNumbers newPulledNumbers, winners, gameNumbers) |> Finished |> PlayingBingo
-                            { state with GameState = finished }
-
+                            match playerFromSourceOrNone gameMsg.Source with
+                            | Some playerSource ->
+                                match winners |> List.filter (fun x -> x.PlayerId = playerSource.PlayerId) with
+                                | [] -> writeError "Non winning player claimed win" gameMsg state ; state
+                                | player -> 
+                                    let winners = player
+                                    tellAllPlayersAboutWinners winners pulledNumbers state.Players
+                                    let finished = (PulledNumbers pulledNumbers, winners, gameNumbers) |> Finished |> PlayingBingo
+                                    { state with GameState = finished }    
+                            | None -> writeError "Internal message to finish game" gameMsg state ; state
                     | _ -> writeError "unexpected state, msg combo" gameMsg state ; state
 
             props(

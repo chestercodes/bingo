@@ -146,6 +146,20 @@ type GameHub () =
         |> GroupRoomActor.GameMsg
         |> sendToActor groupId connectionId this.GameHubActor
 
+    member this.BingoGameClaimWin (msgEnv: GameMsgEnv<string>) =
+        logDebug(sprintf "BingoGameClaimWin %s" this.Context.ConnectionId)   
+
+        let connectionId = this.Context.ConnectionId |> ConnectionId
+        let groupId = msgEnv.groupId |> GroupId
+        let gameId = msgEnv.gameId |> GameId
+        let source = getGameSource msgEnv.playerId connectionId
+
+        GameActor.ClaimWin
+        |> GameActor.Msg.Bingo
+        |> GameActor.toMsg groupId gameId source
+        |> GroupRoomActor.GameMsg
+        |> sendToActor groupId connectionId this.GameHubActor
+
     member this.GroupFinishGame (msg: GroupMsgEnv<Group.FinishGame.Request>) =
         logDebug(sprintf "GroupFinishGame %s" this.Context.ConnectionId)   
 

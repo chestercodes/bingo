@@ -76,6 +76,14 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
             ]
             [ str "submit numbers" ]
     
+    let claimBingoWin =
+        Button.a
+            [
+                Button.Color IsPrimary
+                Button.OnClick (fun _ -> SendClaimWin |> BingoChanged |> dispatch)
+            ]
+            [ str "\"Bingo!\"" ]
+    
     let finishGameButton s gameInfo playerId =
         Button.a
             [
@@ -135,13 +143,19 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
                 str message
             ]
 
-    let playingBingo player callOpt =
+    let playingBingo player callOpt boardCells =
+        let hasWinningNumbers = snd boardCells
+
         match player with
         | Leader _ -> div [] [
             pullNumber
+            if hasWinningNumbers then claimBingoWin
             ]
         | PlayerInfo.Player _ -> div [] [
-            div [ Class "bingo-instructions" ] [ str "Playing Bingo" ]
+            div [ Class "bingo-instructions" ] [
+                if hasWinningNumbers then claimBingoWin
+                str "Playing Bingo"
+            ]
         ]
 
     let finished player gameInfo =
@@ -171,9 +185,10 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
                 
                 let drawTable cells (bingoCallOpt: BingoGame.BingoCall option) = 
                     let highlightCellNumber = match bingoCallOpt with | Some x -> x.Number | None -> -1
+                    let boardCells = fst cells
 
                     div [ Class "bingo-card" ] [
-                        for (n, selected) in cells -> div [ Class "bingo-cell-outer" ] [
+                        for (n, selected) in boardCells -> div [ Class "bingo-cell-outer" ] [
                             let cellClass = 
                                 if n = highlightCellNumber then 
                                     "bingo-cell-highlighted"
@@ -206,15 +221,15 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
                                 div [ Class "bingo-instructions" ] [ str (sprintf "Choose %i numbers" numberOfChoices) ]
                         ]
                         
-                    | WaitingForGameToStart(_, _, _, playersSummary) -> 
+                    | WaitingForGameToStart(_, _, _, _, playersSummary) -> 
                         div [] [
                             playersSummaryList playersSummary
                             waitingForGameToStart groupPlayer.Player
                         ]
                     | SittingOutAsMissedStart _ -> 
                         div [ Class "bingo-instructions" ] [ str "Sitting out as missed start" ]
-                    | BGState.PlayingBingo (_, _, _, callOpt) -> playingBingo groupPlayer.Player callOpt
-                    | Finished(_,_, winners) -> finishedWinners winners
+                    | BGState.PlayingBingo (_, _, _, boardCells, callOpt) -> playingBingo groupPlayer.Player callOpt boardCells
+                    | Finished(_, _,_, winners) -> finishedWinners winners
                     | GettingGameState -> 
                         div [ Class "bingo-instructions" ] [ str "Waiting for game to start" ]
 
@@ -223,17 +238,17 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
                     | ChoosingNumbers _ -> div [] []
                     | WaitingForGameToStart _ -> div [] []
                     | SittingOutAsMissedStart(_, _, bingoCallOpt) -> div [] [ bingoCall bingoCallOpt ]
-                    | BGState.PlayingBingo(_, _, _, bingoCallOpt) -> div [] [ bingoCall bingoCallOpt ]
+                    | BGState.PlayingBingo(_, _, _, _, bingoCallOpt) -> div [] [ bingoCall bingoCallOpt ]
                     | Finished _ -> finished groupPlayer.Player gameInfo
                     | GettingGameState -> div [] []
                 
                 let bingoTable =
                     match bingo with
                     | ChoosingNumbers(_,_,_, cells, _) -> drawTable cells None
-                    | WaitingForGameToStart(_,_, cells,_) -> drawTable cells None
+                    | WaitingForGameToStart(_, _,_, cells,_) -> drawTable cells None
                     | SittingOutAsMissedStart(_, cells, bingoCallOpt) -> drawTable cells bingoCallOpt
-                    | BGState.PlayingBingo(_, _, cells, bingoCallOpt) -> drawTable cells bingoCallOpt
-                    | Finished(_, cells,_) -> drawTable cells None
+                    | BGState.PlayingBingo(_, _, _, cells, bingoCallOpt) -> drawTable cells bingoCallOpt
+                    | Finished(_, _, cells,_) -> drawTable cells None
                     | GettingGameState -> div [] []
 
                 div [] [

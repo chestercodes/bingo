@@ -118,6 +118,10 @@ let pull groupId gameId playerId connectionId =
     |> GameActor.Bingo
     |> toGame groupId gameId playerId (ConnectionId connectionId)
 
+let claimWin groupId gameId playerId connectionId =
+    GameActor.BingoMsg.ClaimWin
+    |> GameActor.Bingo
+    |> toGame groupId gameId playerId (ConnectionId connectionId)
 
 [<Fact>]
 let ``The system creates a new game actor`` () =
@@ -146,7 +150,8 @@ let ``The group actor tells the first joining client its the leader, second is n
         hubActor <! requestJoinGroup gameInfo.GroupId gameInfo.GroupCode "abc123"
         let assertMsg isLeader = fun ((msg: JoiningGroupAcceptedResponse ), (conId: ConnectionId)) -> Assert.Equal(isLeader, msg.IsLeader)
         responderProbe.ExpectMsg<JoiningGroupAcceptedResponse * ConnectionId>(assertMsg true) |> ignore
-
+        responderProbe.ExpectMsg<PlayerName list * ConnectionId>() |> ignore // expects are required
+        
         hubActor <! requestJoinGroup gameInfo.GroupId gameInfo.GroupCode "abc234"
         let assertMsg isLeader = fun ((msg: JoiningGroupAcceptedResponse ), (conId: ConnectionId)) -> Assert.Equal(isLeader, msg.IsLeader)
         responderProbe.ExpectMsg<JoiningGroupAcceptedResponse * ConnectionId>(assertMsg false) |> ignore
@@ -163,7 +168,8 @@ let ``The group actor tells the client the group state`` () =
         let conId = "abc123"
         hubActor <! requestJoinGroup gameInfo.GroupId gameInfo.GroupCode conId
         responderProbe.ExpectMsg<JoiningGroupAcceptedResponse * ConnectionId>() |> ignore // expects are required
-
+        responderProbe.ExpectMsg<PlayerName list * ConnectionId>() |> ignore // expects are required
+        
         let groupId = (GroupId groupId)
         hubActor <! requestState groupId conId
         responderProbe.ExpectMsg<GroupState * ConnectionId>()
@@ -181,6 +187,7 @@ let ``The group actor tells the client about a created game`` () =
         let conId = "abc123"
         hubActor <! requestJoinGroup gameInfo.GroupId gameInfo.GroupCode conId
         responderProbe.ExpectMsg<JoiningGroupAcceptedResponse * ConnectionId>() |> ignore // expects are required
+        responderProbe.ExpectMsg<PlayerName list * ConnectionId>() |> ignore // expects are required
         let groupId = (GroupId groupId)
         hubActor <! requestState groupId conId
         responderProbe.ExpectMsg<GroupState * ConnectionId>() |> ignore
@@ -236,6 +243,10 @@ let ``Plays a game of bingo`` () =
         responderProbe.ExpectMsg<BingoGame.NumberPulled * ConnectionId>(duration=delayN) |> ignore
         responderProbe.ExpectMsg<BingoGame.NumberPulled * ConnectionId>(duration=delayN) |> ignore
         hubActor <! pull groupId gameId playerId1 con1Id
+        responderProbe.ExpectMsg<BingoGame.NumberPulled * ConnectionId>(duration=delayN) |> ignore
+        responderProbe.ExpectMsg<BingoGame.NumberPulled * ConnectionId>(duration=delayN) |> ignore
+        
+        hubActor <! claimWin groupId gameId playerId1 con1Id
         responderProbe.ExpectMsg<BingoGame.FinishedBingo * ConnectionId>(duration=delayN) |> ignore
         responderProbe.ExpectMsg<BingoGame.FinishedBingo * ConnectionId>(duration=delayN) |> ignore
         

@@ -70,6 +70,7 @@ let getServer (connection: HubConnection): Server =
             NumbersChosen = fun model -> connection.invoke("BingoGameNumbersChosen", toArgs model)
             StartPullingNumbers = fun model -> connection.invoke("BingoGameStartPullingNumbers", toArgs model)
             PullNumber = fun model -> connection.invoke("BingoGamePullNumber", toArgs model)
+            ClaimWin = fun model -> connection.invoke("BingoGameClaimWin", toArgs model)
         }
         GroupState = fun model -> connection.invoke("GroupState", toArgs model)
     }
@@ -163,7 +164,7 @@ let updateFromServer (server: Server) =
             let groupId = groupStateToIdUnsafe state.Group
             let playerId = groupStateToPlayerIdUnsafe state.Group
             let gameInfo = { GroupId = groupId; PlayerId = playerId; GameId = gameId }
-            let cells = getCells None (Some (PlayerChoices Set.empty)) gameNumbers
+            let cells = getCells None (Some (PlayerChoices Set.empty)) gameNumbers numberOfChoices
             let playingState = Bingo (gameInfo, numberOfChoices, gameNumbers, ChoosingNumbers (numberOfChoices, gameNumbers, PlayerChoices Set.empty, cells, []))
             { state with Play = playingState }, Cmd.none
 
@@ -171,8 +172,8 @@ let updateFromServer (server: Server) =
             let groupId = groupStateToIdUnsafe state.Group
             let playerId = groupStateToPlayerIdUnsafe state.Group
             let gameInfo = { GroupId = groupId; PlayerId = playerId; GameId = gameId }
-            let cells = getCells (Some pulledNumbers) None gameNumbers
             let irrelevant = NumberOfChoices 1
+            let cells = getCells (Some pulledNumbers) None gameNumbers irrelevant
             let playingState = Bingo (gameInfo, irrelevant, gameNumbers, SittingOutAsMissedStart (gameNumbers, cells, None))
             { state with Play = playingState }, Cmd.none
 
