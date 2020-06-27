@@ -75,6 +75,9 @@ let getServer (connection: HubConnection): Server =
         GroupState = fun model -> connection.invoke("GroupState", toArgs model)
     }
 
+let setCookieValue groupId playerId isLeader =
+    Browser.Dom.document.cookie <- toCookieValue groupId playerId isLeader
+
 let sendGroupState (GroupId groupId) (server: Server) =
     let model: Group.State.Request = { groupId = groupId; }
     Cmd.OfPromise.perform (server.GroupState) model (fun _ -> GroupStateRequestSent)
@@ -110,6 +113,8 @@ let updateFromServer (server: Server) =
                 let groupInfo = { GroupCode = GroupCode code; GroupId = groupId; Url = groupUrl }
                 let groupPlayer = { GroupPlayer.Group = groupInfo; Player = playerInfo }
                 let (PlayerName name) = playerName
+
+                setCookieValue groupId playerId isLeader
 
                 {
                     Group = GState.ChoosingName (name, None, groupPlayer, Hidden, [playerName]) |> Player

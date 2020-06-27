@@ -5,6 +5,7 @@ open Akkling
 open Akka.Actor
 open Shared.Domain
 open Core
+open System
 
 module ClientResponderActor =
     type Msg =
@@ -60,27 +61,40 @@ let log data = if logValue then printfn "%A" data
 
 module Players =
 
-    type Player = { PlayerId: PlayerId; PlayerName: PlayerName; ConnectionId: ConnectionId }
+    type Player = { PlayerId: PlayerId; PlayerName: PlayerName }
+
+    [<NoComparison>]
+    [<NoEquality>]
+    type PlayerState = { Player: Player; ConnectionId: ConnectionId; LastUpdated: DateTime }
 
     type PlayerCommsInfo = { PlayerId: PlayerId; ConnectionId: ConnectionId }
 
-    let playerToComms (player: Player) =
-        { PlayerId = player.PlayerId; ConnectionId = player.ConnectionId }
+    let playerToComms (player: PlayerState) =
+        { PlayerId = player.Player.PlayerId; ConnectionId = player.ConnectionId }
 
-    type GroupPlayers = { LeaderId: PlayerId; Players: Player list; }
+    type GroupPlayers = { LeaderId: PlayerId; Players: PlayerState list; }
 
-    let addPlayerToGroup (groupPlayers: GroupPlayers) player =
-        let withPlayer = player :: (groupPlayers.Players |> List.filter (fun x -> x.PlayerId <> player.PlayerId))
-        { groupPlayers with Players = withPlayer }
+    // let addPlayerToGroup (groupPlayers: GroupPlayers) (player: Player) connectionId =
+    //     let newPlayer = { Player = player; ConnectionId = connectionId; LastUpdated = DateTime.Now }
+    //     let withPlayer = newPlayer :: (groupPlayers.Players |> List.filter (fun p -> p.Player.PlayerId <> player.PlayerId))
+    //     { groupPlayers with Players = withPlayer }
 
-    let removePlayerFromGroup (groupPlayers: GroupPlayers) (player: Player) =
-        let withoutPlayer = (groupPlayers.Players |> List.filter (fun x -> x.PlayerId <> player.PlayerId))
+    let removePlayerFromGroup (groupPlayers: GroupPlayers) (player: Player) connectionId =
+        let withoutPlayer = (groupPlayers.Players |> List.filter (fun p -> p.Player.PlayerId <> player.PlayerId))
         { groupPlayers with Players = withoutPlayer }
 
-    let updatePlayerInGroup (groupPlayers: GroupPlayers) player =
-        let withPlayer = player :: (groupPlayers.Players |> List.filter (fun x -> x.PlayerId <> player.PlayerId))
+    let updatePlayerInGroup (groupPlayers: GroupPlayers) (player: Player) connectionId =
+        let newPlayer = { Player = player; ConnectionId = connectionId; LastUpdated = DateTime.Now }
+        let withPlayer = newPlayer :: (groupPlayers.Players |> List.filter (fun p -> p.Player.PlayerId <> player.PlayerId))
         { groupPlayers with Players = withPlayer }
-        
+
+    let updatePlayerState (groupPlayers: GroupPlayers) playerId connectionId =
+        match groupPlayers.Players |> List.filter (fun p -> p.Player.PlayerId <> playerId) with
+        | [ existing ] ->
+            let newPlayer = { Player = existing.Player; ConnectionId = connectionId; LastUpdated = DateTime.Now }
+            let withPlayer = newPlayer :: (groupPlayers.Players |> List.filter (fun p -> p.Player.PlayerId <> playerId))
+            { groupPlayers with Players = withPlayer }
+        | _ -> groupPlayers
 
 module GameActor =
     open Players
@@ -93,9 +107,9 @@ module GameActor =
         | ClaimWin
     
     type Msg =
-        | AddPlayer of Player
-        | RemovePlayer of Player
-        | UpdatePlayer of Player
+        | AddPlayer of Player * ConnectionId
+        | RemovePlayer of Player * ConnectionId
+        | UpdatePlayer of Player * ConnectionId
         | TellPlayersState of PlayerCommsInfo list
         | Bingo of BingoMsg
 
@@ -105,7 +119,7 @@ module GameActor =
         { Msg = msg; GroupId = groupId; GameId = gameId; Source = source }
 
 
-    type PlayersNumbers = PlayersNumbers of (Player * int Set) list
+    type PlayersNumbers = PlayersNumbers of (PlayerState * int Set) list
 
     type BingoState =
         | WaitingForNumbers of PlayersNumbers * GameNumbers
@@ -133,9 +147,9 @@ module GameActor =
             let numbersChosen = 
                 playersNumbers
                 |> fun (PlayersNumbers y) -> y
-                |> List.map fst
-                |> List.contains x
-            { PlayerName = x.PlayerName; HasChosen = numbersChosen }
+                |> List.map (fun x -> (fst x).Player)
+                |> List.contains x.Player
+            { PlayerName = x.Player.PlayerName; HasChosen = numbersChosen }
         )
 
     let create =
@@ -159,7 +173,7 @@ module GameActor =
             let tellAllPlayersAboutWinners (winners: Player list) newPulledNumbers (groupPlayers: GroupPlayers) =
                 let winnersNames = winners |> List.map (fun x -> x.PlayerName)
                 for player in groupPlayers.Players do
-                    let isWinner = winners |> List.contains player
+                    let isWinner = winners |> List.contains player.Player
                     (isWinner, PulledNumbers newPulledNumbers, winnersNames)
                     |> BingoGame.FinishedBingo
                     |> ClientResponderActor.BingoFinished
@@ -192,7 +206,7 @@ module GameActor =
                     | PlayingBingo(Playing (pulledNumbers, _, gameNumbers)) ->
                         (gameNumbers, pulledNumbers) |> BingoGame.PlayingBingo |> ClientResponderActor.BingoPlaying
                     | PlayingBingo(Finished (pulledNumbers, winners, gameNumbers)) ->
-                        let isWinner = winners |> List.map playerToComms |> List.contains player
+                        let isWinner = (winners |> List.filter (fun x -> player.PlayerId = x.PlayerId)).Length = 1
                         (isWinner, pulledNumbers, winners |> List.map (fun x -> x.PlayerName))
                         |> BingoGame.FinishedBingo
                         |> ClientResponderActor.BingoFinished
@@ -206,12 +220,12 @@ module GameActor =
                 let winners =
                     playerNumbers
                     |> fun (PlayersNumbers playerNumbers) -> playerNumbers
-                    |> List.filter (fun ((_: Player), (choices: int Set)) ->
+                    |> List.filter (fun ((_: PlayerState), (choices: int Set)) ->
                         let (NumberOfChoices choicesRequired) = choicesRequired
                         Set.intersect gamePulledNumbers choices
                         |> fun playersChoicesPulled -> playersChoicesPulled.Count = choicesRequired
                     )
-                    |> List.map (fun ((player: Player), (_: int Set)) -> player)
+                    |> List.map (fun ((player: PlayerState), (_: int Set)) -> player)
                 match winners with
                 | [] -> NobodyHasWonYet
                 | winners -> WeHaveAWinner winners
@@ -231,7 +245,7 @@ module GameActor =
                             | GameMsgSource.Internal -> None
                             | GameMsgSource.FromPlayer playerSource ->
                                 state.Players.Players
-                                |> List.filter (fun x -> x.PlayerId = playerSource.PlayerId)
+                                |> List.filter (fun x -> x.Player.PlayerId = playerSource.PlayerId)
                                 |> Some
 
                         match playerOrNone with
@@ -276,10 +290,10 @@ module GameActor =
                         | WeHaveAWinner winners ->
                             match playerFromSourceOrNone gameMsg.Source with
                             | Some playerSource ->
-                                match winners |> List.filter (fun x -> x.PlayerId = playerSource.PlayerId) with
+                                match winners |> List.filter (fun x -> x.Player.PlayerId = playerSource.PlayerId) with
                                 | [] -> writeError "Non winning player claimed win" gameMsg state ; state
                                 | player -> 
-                                    let winners = player
+                                    let winners = player |> List.map (fun x -> x.Player)
                                     tellAllPlayersAboutWinners winners pulledNumbers state.Players
                                     let finished = (PulledNumbers pulledNumbers, winners, gameNumbers) |> Finished |> PlayingBingo
                                     { state with GameState = finished }    
@@ -295,12 +309,12 @@ module GameActor =
                             
                             let newState =
                                 match msg.Msg with
-                                | AddPlayer player -> 
-                                    { state with Players = addPlayerToGroup state.Players player }
-                                | RemovePlayer player -> 
-                                    { state with Players = removePlayerFromGroup state.Players player }
-                                | UpdatePlayer player -> 
-                                    { state with Players = updatePlayerInGroup state.Players player }
+                                | AddPlayer (player, connectionId) -> 
+                                    { state with Players = updatePlayerInGroup state.Players player connectionId }
+                                | RemovePlayer (player, connectionId) -> 
+                                    { state with Players = removePlayerFromGroup state.Players player connectionId }
+                                | UpdatePlayer (player, connectionId) -> 
+                                    { state with Players = updatePlayerInGroup state.Players player connectionId }
                                 | TellPlayersState players ->
                                     tellPlayersState players msg.GameId state
                                     state
@@ -364,7 +378,7 @@ module GroupRoomActor =
                 tellClientResponderActor conId msg
 
             let tellAllPlayersAboutGroupPlayers groupPlayers =
-                let names = groupPlayers.Players |> List.map (fun x -> x.PlayerName)
+                let names = groupPlayers.Players |> List.map (fun x -> x.Player.PlayerName)
                 for player in groupPlayers.Players do
                     tellClientResponderActor player.ConnectionId (GroupPlayers names)
 
@@ -374,6 +388,13 @@ module GroupRoomActor =
                         actor {
                             let! msg = mailbox.Receive()
                             msg |> log
+
+                            let state =
+                                match msg.Source with
+                                | FromClient _ -> state
+                                | FromMember playerSource -> 
+                                    let newGroupPlayers = updatePlayerState state.GroupPlayers playerSource.PlayerId playerSource.ConnectionId
+                                    { state with GroupPlayers = newGroupPlayers }
 
                             match msg.Msg with
                             | JoinGroup (JoiningGroupRequest msgGroupCode) ->
@@ -387,17 +408,18 @@ module GroupRoomActor =
                                     |> JoiningGroupAccepted
                                     |> tellClientResponder msg.Source
 
-                                    let newPlayer = { PlayerId = playerId; PlayerName = playerName; ConnectionId = toConnectionId msg.Source }
+                                    let newPlayer = { PlayerId = playerId; PlayerName = playerName;  }
+                                    let connectionId = toConnectionId msg.Source
 
                                     match state.GameActor with
                                     | Some (gameId, actorRef) ->
-                                        newPlayer
+                                        (newPlayer, connectionId)
                                         |> GameActor.AddPlayer
                                         |> GameActor.toMsg groupId gameId GameMsgSource.Internal
                                         |> fun x -> actorRef <! x
                                     | None -> ()
 
-                                    let groupPlayers = addPlayerToGroup state.GroupPlayers newPlayer
+                                    let groupPlayers = updatePlayerInGroup state.GroupPlayers newPlayer connectionId
 
                                     tellAllPlayersAboutGroupPlayers groupPlayers
 
@@ -434,7 +456,7 @@ module GroupRoomActor =
                                     match groupEnv.Msg with
                                     | ChangeName (playerId, playerName) ->
                                         let source = groupToGameSource playerId groupEnv.Source
-                                        { PlayerName = playerName; PlayerId = playerId; ConnectionId = conId }
+                                        ({ PlayerName = playerName; PlayerId = playerId }, conId)
                                         |> GameActor.UpdatePlayer
                                         |> GameActor.toMsg groupId gameId source
                                         |> fun x -> actorRef <! x
@@ -444,13 +466,13 @@ module GroupRoomActor =
                                 let newState =
                                     match groupEnv.Msg with
                                     | ChangeName (playerId, playerName) ->
-                                        let newPlayer = { PlayerName = playerName; PlayerId = playerId; ConnectionId = conId }
+                                        let newPlayer = { PlayerName = playerName; PlayerId = playerId }
 
                                         { Name =  playerName }
                                         |> Msg.ChangeNameAccepted
                                         |> tellClientResponder msg.Source
 
-                                        let groupPlayers = updatePlayerInGroup state.GroupPlayers newPlayer
+                                        let groupPlayers = updatePlayerInGroup state.GroupPlayers newPlayer conId
 
                                         tellAllPlayersAboutGroupPlayers groupPlayers
 

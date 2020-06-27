@@ -20,7 +20,12 @@ connection.start() |> ignore
 let findCodeFromUrl: Cmd<Msg> =
     async {
         let url = Browser.Url.URL
-        let url = url.Create(Browser.Dom.window.location.toString())
+        // fb adds a param for some reason... 
+        // e.g. https://gamesroom.xyz/?fbclid=IwAR36To-XAa77eh5yIm9hPagajTE1_1h_7zRQ-YREd7qufcXSjg160vAJ2Aw?groupId=Z1V08I&groupCode=MGTZSH
+        let regex = Fable.Core.JS.RegExp.Create("\\?fbclid=[A-Za-z0-9\\-_]+")
+        let urlVal = Browser.Dom.window.location.toString()
+        let urlVal = regex.Replace(urlVal, "")
+        let url = url.Create(urlVal)
         let s = url.searchParams
         match s.has("groupId"), s.has("groupId") with
         | true, true ->

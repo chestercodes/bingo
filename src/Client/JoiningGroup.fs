@@ -62,26 +62,48 @@ let delayed (n: int) =
 
 let delayToWaitForSignalRConnectionToStart = 750
 
+let delayedSend = Cmd.OfAsync.perform delayed delayToWaitForSignalRConnectionToStart (fun _ -> SendJoinGroupRequest)
+
+let delayedJoinedResponse msg =
+    Cmd.OfAsync.perform delayed delayToWaitForSignalRConnectionToStart (fun _ -> msg)
+
+let toCookieValue (GroupId groupId) (PlayerId playerId) isLeader =
+    sprintf "%s-%s-%b" groupId playerId isLeader
+
+let fromCookieValue (cookie: string) =
+    match cookie.Split('-') with
+    | [| groupId; playerId; isLeader |] -> 
+        Some (GroupId groupId, PlayerId playerId, isLeader.ToLower() = "true")
+    | _ -> None
+
+let tryFindStateFromCookie cookie =
+    match cookie with
+    | null -> None
+    | "" -> None
+    | s -> fromCookieValue s
+
 let joiningGroupUpdateFromServer server =
+    let waitingForResponse groupCode groupId error = (groupCode, groupId, error) |> WaitingForResponse
     let gameGroupUpdate: JGUpdate = fun msg state ->
         match msg, state with
-        | SendCreateGroup, _ ->
-            NoIdFoundSuggestNewGame, sendCreateGroup ()
+        | SendCreateGroup, _ -> NoIdFoundSuggestNewGame, sendCreateGroup ()
         | CreateGroupResponse resp, _ ->
             updateWindowUrl resp
-            let delayedSend = Cmd.OfAsync.perform delayed delayToWaitForSignalRConnectionToStart (fun _ -> SendJoinGroupRequest)
-            (resp.groupCode, resp.groupId |> GroupId, None) |> WaitingForResponse, delayedSend
-        | CouldNotFindGroupInfoFromUrl, SearchingForGroupInfoFromUrl ->
-            NoIdFoundSuggestNewGame, Cmd.none
+            waitingForResponse resp.groupCode (GroupId resp.groupId) None, delayedSend
+        | CouldNotFindGroupInfoFromUrl, SearchingForGroupInfoFromUrl -> NoIdFoundSuggestNewGame, Cmd.none
         | FoundGroupInfoFromUrl (groupCode, groupId), SearchingForGroupInfoFromUrl ->
-            // race condition with connection not being started
-            let delayedSend = Cmd.OfAsync.perform delayed delayToWaitForSignalRConnectionToStart (fun _ -> SendJoinGroupRequest)
-            (groupCode, groupId, None) |> WaitingForResponse, delayedSend
+            match tryFindStateFromCookie Browser.Dom.document.cookie with
+            | Some (cookieGroupId, cookiePlayerId, isLeader) ->
+                if groupId = cookieGroupId then
+                    let joinedGroup = delayedJoinedResponse (JoinGroupAccepted (cookiePlayerId, isLeader, PlayerName "player"))
+                    waitingForResponse groupCode groupId None, joinedGroup
+                else waitingForResponse groupCode groupId None, delayedSend
+            | _ -> 
+                waitingForResponse groupCode groupId None, delayedSend
         | SendJoinGroupRequest, WaitingForResponse (groupCode, groupId, _) ->
-            let cmd = sendJoinGroupRequest groupId groupCode server
-            (groupCode, groupId, None) |> WaitingForResponse, cmd
+            waitingForResponse groupCode groupId None, sendJoinGroupRequest groupId groupCode server
         | JoinGroupRejected error, WaitingForResponse (groupCode, groupId, _) ->
-            (groupCode, groupId, Some error) |> WaitingForResponse, Cmd.none
+            waitingForResponse groupCode groupId (Some error), Cmd.none
         | JoinGroupRequestSent, _ ->
             state, Cmd.none
         | _ ->
