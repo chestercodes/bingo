@@ -16,6 +16,7 @@ module ClientResponderActor =
         | ChangeNameAccepted of ChangeNameAcceptedResponse
         | ChangeNameRejected of ChangeNameRejectedResponse
         | GroupPlayers of PlayerName list
+        | BingoChoosingSpec of GameId
         | BingoStarted of BingoGame.GameStarted
         | BingoStartMissed of BingoGame.GameStarted
         | BingoGameChoicesAccepted of BingoGame.PlayersChoices
@@ -44,6 +45,7 @@ module ClientResponderActor =
                             | ChangeNameAccepted resp -> clientResponder.ChangeNameAccepted resp msg.ConnectionId
                             | ChangeNameRejected resp -> clientResponder.ChangeNameRejected resp msg.ConnectionId
                             | GroupPlayers resp -> clientResponder.GroupPlayers resp msg.ConnectionId
+                            | BingoChoosingSpec resp -> clientResponder.BingoGameChoosingGameSpec resp msg.ConnectionId
                             | BingoStarted resp -> clientResponder.BingoGameStarted resp msg.ConnectionId
                             | BingoStartMissed resp -> clientResponder.BingoGameHasStartedAndCantBeJoined resp msg.ConnectionId
                             | BingoGameChoicesAccepted resp -> clientResponder.BingoGameChoicesAccepted resp msg.ConnectionId
@@ -101,6 +103,7 @@ module GameActor =
     open Shared.Domain.BingoGame
 
     type BingoMsg =
+        | LeaderChosenSpec of UnvalidatedGameSpec
         | PlayerChosenNumbers of UnvalidatedPlayersChoices
         | StartPullingNumbers
         | PullNumber
@@ -122,23 +125,23 @@ module GameActor =
     type PlayersNumbers = PlayersNumbers of (PlayerState * int Set) list
 
     type BingoState =
-        | WaitingForNumbers of PlayersNumbers * GameNumbers
-        | Playing of PulledNumbers * PlayersNumbers * GameNumbers
-        | Finished of PulledNumbers * winners: Player list * GameNumbers
+        | WaitingForGameSpec
+        | WaitingForNumbers of PlayersNumbers * GameSpec
+        | Playing of PulledNumbers * PlayersNumbers * GameSpec
+        | Finished of PulledNumbers * winners: Player list * GameSpec
 
     type GameState =
         | PlayingBingo of BingoState
 
     type State = { Players: GroupPlayers; GameState: GameState }
 
-#if DEBUG
-    let choicesRequired = NumberOfChoices 2
-    let numberCount = 5
-#else
-    let choicesRequired = NumberOfChoices 5
-    let numberCount = 25
-#endif
-
+// #if DEBUG
+//     let choicesRequired = NumberOfChoices 2
+//     let numberCount = 5
+// #else
+//     let choicesRequired = NumberOfChoices 5
+//     let numberCount = 25
+// #endif
     let writeError message msg state = printfn "ERROR: %s \nMsg: %A\nState: %A" message msg state
 
     let getPlayersSummary (playersNumbers: PlayersNumbers) (groupPlayers: GroupPlayers):PlayerStartingSummary list =
@@ -155,17 +158,24 @@ module GameActor =
     let create =
         fun (clientResponderActor: ICanTell<ClientResponderActor.MsgEnv>) (gameType: AvailableGames) (initialPlayers: GroupPlayers) (r: IDealWithRandomness) ->
 
-            let rec getNumberNotAlreadyChosen pulledNumbers (GameNumbers gameNumbers) =
+            let getGameNumbers numberCount =
+                [1 .. 100]
+                |> r.GetDistinctElements numberCount
+                |> Set.ofList
+                |> GameNumbers
+
+            let rec getNumberNotAlreadyChosen pulledNumbers (gameSpec: GameSpec) =
+                let (GameNumbers gameNumbers) = gameSpec.Numbers
                 let unpulledNumbers: int Set = gameNumbers - pulledNumbers
                 let n: int = r.GetOneElement (Set.toList unpulledNumbers)
                 n
             
             let tellClientResponder conId msg = clientResponderActor <! (msg |> ClientResponderActor.toMsg conId)
 
-            let tellAllPlayersGameHasStarted (groupPlayers: GroupPlayers) gameNumbers =
+            let tellAllPlayersGameHasStarted (groupPlayers: GroupPlayers) gameSpec =
                 let playerConnectionIds = groupPlayers.Players |> List.map (fun x -> x.ConnectionId)
                 for conId in playerConnectionIds do
-                    (gameNumbers, PulledNumbers (Set.ofList []))
+                    (gameSpec, PulledNumbers (Set.ofList []))
                     |> BingoGame.PlayingBingo
                     |> ClientResponderActor.BingoPlaying
                     |> tellClientResponder conId
@@ -200,9 +210,10 @@ module GameActor =
             
             let tellPlayersState (players: PlayerCommsInfo list) gameId state =
                 for player in players do
-                    match state.GameState with
-                    | PlayingBingo(WaitingForNumbers (a, gameNumbers)) ->
-                        (choicesRequired, gameNumbers, PulledNumbers (Set.ofList []), gameId) |> BingoGame.GameStarted |> ClientResponderActor.BingoStarted
+                    match state with
+                    | PlayingBingo(WaitingForGameSpec _) -> ClientResponderActor.BingoChoosingSpec gameId
+                    | PlayingBingo(WaitingForNumbers (a, gameSpec)) ->
+                        (gameSpec, PulledNumbers (Set.ofList []), gameId) |> BingoGame.GameStarted |> ClientResponderActor.BingoStarted
                     | PlayingBingo(Playing (pulledNumbers, _, gameNumbers)) ->
                         (gameNumbers, pulledNumbers) |> BingoGame.PlayingBingo |> ClientResponderActor.BingoPlaying
                     | PlayingBingo(Finished (pulledNumbers, winners, gameNumbers)) ->
@@ -216,7 +227,7 @@ module GameActor =
                 choices |> PlayersChoices |> ClientResponderActor.BingoGameChoicesAccepted
                 |> tellClientResponder player.ConnectionId
 
-            let (|NobodyHasWonYet|WeHaveAWinner|) (playerNumbers, gamePulledNumbers) =
+            let (|NobodyHasWonYet|WeHaveAWinner|) (playerNumbers, gamePulledNumbers, choicesRequired) =
                 let winners =
                     playerNumbers
                     |> fun (PlayersNumbers playerNumbers) -> playerNumbers
@@ -239,7 +250,17 @@ module GameActor =
                 match state.GameState with
                 | PlayingBingo bingoState ->
                     match bingoState, msg with
-                    | WaitingForNumbers ((PlayersNumbers playersNumbers), gameNumbers), PlayerChosenNumbers(UnvalidatedPlayersChoices choices) ->
+                    | WaitingForGameSpec, LeaderChosenSpec(UnvalidatedGameSpec (numberOfChoices, gridSize)) ->
+                        if gridSize > numberOfChoices && numberOfChoices > 0 then
+                            let gameSpec = { Numbers = getGameNumbers gridSize; Count = NumberOfChoices numberOfChoices }
+                            let newState = (PlayersNumbers [], gameSpec) |> WaitingForNumbers |> PlayingBingo
+                            
+                            tellPlayersState (state.Players.Players |> List.map playerToComms) gameMsg.GameId newState
+                            { state with GameState = newState }
+                        else 
+                            state
+                        
+                    | WaitingForNumbers ((PlayersNumbers playersNumbers), gameSpec), PlayerChosenNumbers(UnvalidatedPlayersChoices choices) ->
                         let playerOrNone =
                             match gameMsg.Source with
                             | GameMsgSource.Internal -> None
@@ -257,7 +278,7 @@ module GameActor =
                             
                                 tellAllPlayersAboutChosenNumbers (getPlayersSummary newPlayersNumbers state.Players) state.Players
                             
-                                { state with GameState = WaitingForNumbers(newPlayersNumbers, gameNumbers) |> PlayingBingo }
+                                { state with GameState = WaitingForNumbers(newPlayersNumbers, gameSpec) |> PlayingBingo }
                             else
                                 state
 
@@ -276,16 +297,16 @@ module GameActor =
                             else writeError "Non leader player tried to start game" gameMsg state ; state
                         | GameMsgSource.Internal -> writeError "Internal message to start game" gameMsg state ; state
                         
-                    | Playing (PulledNumbers pulledNumbers, playerNumbers, gameNumbers), PullNumber ->
-                        let chosenNumber = getNumberNotAlreadyChosen pulledNumbers gameNumbers
+                    | Playing (PulledNumbers pulledNumbers, playerNumbers, gameSpec), PullNumber ->
+                        let chosenNumber = getNumberNotAlreadyChosen pulledNumbers gameSpec
                         let newPulledNumbers = pulledNumbers.Add chosenNumber
                         
                         tellAllPlayersAboutPulledNumber chosenNumber newPulledNumbers state.Players
-                        let newState = (newPulledNumbers |> PulledNumbers, playerNumbers, gameNumbers) |> Playing |> PlayingBingo
+                        let newState = (newPulledNumbers |> PulledNumbers, playerNumbers, gameSpec) |> Playing |> PlayingBingo
                         { state with GameState = newState }
                             
-                    | Playing (PulledNumbers pulledNumbers, playerNumbers, gameNumbers), ClaimWin ->
-                        match playerNumbers, pulledNumbers with
+                    | Playing (PulledNumbers pulledNumbers, playerNumbers, gameSpec), ClaimWin ->
+                        match playerNumbers, pulledNumbers, gameSpec.Count with
                         | NobodyHasWonYet -> writeError "Win claimed when no player has won" gameMsg state ; state
                         | WeHaveAWinner winners ->
                             match playerFromSourceOrNone gameMsg.Source with
@@ -295,7 +316,7 @@ module GameActor =
                                 | player -> 
                                     let winners = player |> List.map (fun x -> x.Player)
                                     tellAllPlayersAboutWinners winners pulledNumbers state.Players
-                                    let finished = (PulledNumbers pulledNumbers, winners, gameNumbers) |> Finished |> PlayingBingo
+                                    let finished = (PulledNumbers pulledNumbers, winners, gameSpec) |> Finished |> PlayingBingo
                                     { state with GameState = finished }    
                             | None -> writeError "Internal message to finish game" gameMsg state ; state
                     | _ -> writeError "unexpected state, msg combo" gameMsg state ; state
@@ -316,21 +337,15 @@ module GameActor =
                                 | UpdatePlayer (player, connectionId) -> 
                                     { state with Players = updatePlayerInGroup state.Players player connectionId }
                                 | TellPlayersState players ->
-                                    tellPlayersState players msg.GameId state
+                                    tellPlayersState players msg.GameId state.GameState
                                     state
                                 | Bingo bingo -> (bingoMsg bingo state msg)
                             
                             return! loop newState
                         }
-
                     let initialGameState =
-                        let gameNumbers =
-                            [1 .. 100]
-                            |> r.GetDistinctElements numberCount
-                            |> Set.ofList
-                            |> GameNumbers
                         match gameType with
-                        | AvailableGames.Bingo -> (PlayersNumbers [], gameNumbers) |> WaitingForNumbers |> PlayingBingo
+                        | AvailableGames.Bingo -> WaitingForGameSpec |> PlayingBingo
 
                     loop { Players = initialPlayers; GameState = initialGameState }
             )
@@ -373,9 +388,7 @@ module GroupRoomActor =
             let tellClientResponderActor conId msg =
                 clientResponderActor <! (msg |> ClientResponderActor.toMsg conId)
 
-            let tellClientResponder source msg =
-                let conId = toConnectionId source
-                tellClientResponderActor conId msg
+            let tellClientResponder source msg = tellClientResponderActor (toConnectionId source) msg
 
             let tellAllPlayersAboutGroupPlayers groupPlayers =
                 let names = groupPlayers.Players |> List.map (fun x -> x.Player.PlayerName)

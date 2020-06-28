@@ -65,6 +65,7 @@ type IClientResponder =
     abstract member GroupPlayers: PlayerName list -> ConnectionId -> unit
     abstract member ChangeNameAccepted: ChangeNameAcceptedResponse -> ConnectionId -> unit
     abstract member ChangeNameRejected: ChangeNameRejectedResponse -> ConnectionId -> unit
+    abstract member BingoGameChoosingGameSpec: GameId -> ConnectionId -> unit
     abstract member BingoGameStarted: BingoGame.GameStarted -> ConnectionId -> unit
     abstract member BingoGameHasStartedAndCantBeJoined: BingoGame.GameStarted -> ConnectionId -> unit
     abstract member BingoGamePlayerChoseNumbers: BingoGame.PlayerChoseNumbers -> ConnectionId -> unit

@@ -181,7 +181,7 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
             match model with
             | NotConnectedToGroup _ -> div [] [ ]
             | WaitingForLeaderToChooseGame _ -> waitingForLeaderToChooseGame groupPlayer.Player
-            | PlayingState.Bingo (gameInfo, _, _, bingo) ->
+            | PlayingState.Bingo (gameInfo, bingo) ->
                 
                 let drawTable cells (bingoCallOpt: BingoGame.BingoCall option) = 
                     let highlightCellNumber = match bingoCallOpt with | Some x -> x.Number | None -> -1
@@ -210,9 +210,40 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
                         ]
                     ]
 
+                let startGameSpec =
+                    Button.a
+                        [
+                            Button.Color IsPrimary
+                            Button.OnClick (fun _ -> SendGameSpec |> BingoChanged |> dispatch)
+                        ]
+                        [ str "start game" ]
+
+                let leaderChoosingGameSpec numChoices gridSize errorOpt groupPlayer = div [] [
+                    match groupPlayer with
+                    | Leader (_, playerId) -> div [ Class "bingo-instructions" ] [
+                            p [] [ str "Number of choices" ]
+                            Input.text [
+                                Input.Value (string (numChoices))
+                                Input.OnChange (fun x -> GameSpecChanged(x.Value, gridSize) |> BingoChanged |> dispatch)
+                            ]
+                            p [] [ str "Numbers in card" ]
+                            Input.text [
+                                Input.Value (gridSize)
+                                Input.OnChange (fun x -> GameSpecChanged(numChoices, x.Value) |> BingoChanged |> dispatch)
+                            ]
+                            match errorOpt with
+                            | Some error -> div [] [ str error ]
+                            | None -> div [] [ startGameSpec ]
+                        ]
+                    | PlayerInfo.Player _ -> div [ Class "bingo-instructions" ] [
+                            str "Leader choosing game"
+                        ]
+                    ]
+
                 let preTable =
                     match bingo with
-                    | ChoosingNumbers(NumberOfChoices numberOfChoices, _, PlayerChoices playerChoices, _, playersSummary) ->
+                    | ChoosingNumbers(gameSpec, PlayerChoices playerChoices, _, playersSummary) ->
+                        let (NumberOfChoices numberOfChoices) = gameSpec.Count
                         div [] [
                             playersSummaryList playersSummary
                             if playerChoices.Count = numberOfChoices then
@@ -221,15 +252,16 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
                                 div [ Class "bingo-instructions" ] [ str (sprintf "Choose %i numbers" numberOfChoices) ]
                         ]
                         
-                    | WaitingForGameToStart(_, _, _, _, playersSummary) -> 
+                    | WaitingForGameToStart(_, _, _, playersSummary) -> 
                         div [] [
                             playersSummaryList playersSummary
                             waitingForGameToStart groupPlayer.Player
                         ]
+                    | LeaderChoosingGameSpec _ -> div [] []
                     | SittingOutAsMissedStart _ -> 
                         div [ Class "bingo-instructions" ] [ str "Sitting out as missed start" ]
-                    | BGState.PlayingBingo (_, _, _, boardCells, callOpt) -> playingBingo groupPlayer.Player callOpt boardCells
-                    | Finished(_, _,_, winners) -> finishedWinners winners
+                    | BGState.PlayingBingo (_, _, boardCells, callOpt) -> playingBingo groupPlayer.Player callOpt boardCells
+                    | Finished(_, _, winners) -> finishedWinners winners
                     | GettingGameState -> 
                         div [ Class "bingo-instructions" ] [ str "Waiting for game to start" ]
 
@@ -237,18 +269,20 @@ let play (model : PlayingState) (groupState : GState) (dispatch : Msg -> unit) =
                     match bingo with
                     | ChoosingNumbers _ -> div [] []
                     | WaitingForGameToStart _ -> div [] []
+                    | LeaderChoosingGameSpec _ -> div [] []
                     | SittingOutAsMissedStart(_, _, bingoCallOpt) -> div [] [ bingoCall bingoCallOpt ]
-                    | BGState.PlayingBingo(_, _, _, _, bingoCallOpt) -> div [] [ bingoCall bingoCallOpt ]
+                    | BGState.PlayingBingo(_, _, _, bingoCallOpt) -> div [] [ bingoCall bingoCallOpt ]
                     | Finished _ -> finished groupPlayer.Player gameInfo
                     | GettingGameState -> div [] []
                 
                 let bingoTable =
                     match bingo with
-                    | ChoosingNumbers(_,_,_, cells, _) -> drawTable cells None
-                    | WaitingForGameToStart(_, _,_, cells,_) -> drawTable cells None
+                    | ChoosingNumbers(_,_, cells, _) -> drawTable cells None
+                    | WaitingForGameToStart(_,_, cells,_) -> drawTable cells None
+                    | LeaderChoosingGameSpec (numChoices, gridSize, errorOpt) -> leaderChoosingGameSpec numChoices gridSize errorOpt groupPlayer.Player
                     | SittingOutAsMissedStart(_, cells, bingoCallOpt) -> drawTable cells bingoCallOpt
-                    | BGState.PlayingBingo(_, _, _, cells, bingoCallOpt) -> drawTable cells bingoCallOpt
-                    | Finished(_, _, cells,_) -> drawTable cells None
+                    | BGState.PlayingBingo(_, _, cells, bingoCallOpt) -> drawTable cells bingoCallOpt
+                    | Finished(_, cells,_) -> drawTable cells None
                     | GettingGameState -> div [] []
 
                 div [] [

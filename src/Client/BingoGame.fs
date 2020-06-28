@@ -39,19 +39,24 @@ type BingoCall = { Number: int; GroupCall: GroupCallMessage; }
 
 type BGState =
     | GettingGameState
-    | SittingOutAsMissedStart of GameNumbers * BoardCells * BingoCall option
-    | ChoosingNumbers of NumberOfChoices * GameNumbers * PlayerChoices * BoardCells * PlayerStartingSummary seq
-    | WaitingForGameToStart of NumberOfChoices * GameNumbers * PlayerChoices * BoardCells * PlayerStartingSummary seq
-    | PlayingBingo of NumberOfChoices * GameNumbers * PlayerChoices * BoardCells * previousCall:BingoCall option
-    | Finished of NumberOfChoices * GameNumbers * BoardCells * Winners
+    | SittingOutAsMissedStart of GameSpec * BoardCells * BingoCall option
+    | LeaderChoosingGameSpec of numberOfChoices: string * numberCount: string * errorOpt: string option
+    | ChoosingNumbers of GameSpec * PlayerChoices * BoardCells * PlayerStartingSummary seq
+    | WaitingForGameToStart of GameSpec * PlayerChoices * BoardCells * PlayerStartingSummary seq
+    | PlayingBingo of GameSpec * PlayerChoices * BoardCells * previousCall:BingoCall option
+    | Finished of GameSpec * BoardCells * Winners
     
 type BGMsg =
     | GameStateRequestSent
-    | MissedGameStart of GameNumbers * PulledNumbers * GameId
-    | PlayingStateReceived of GameNumbers * PulledNumbers
-    | GameStartedChooseNumbers of NumberOfChoices * GameNumbers * GameId
+    | GameStartedLeaderChooseGameSpec of GameId
+    | MissedGameStart of GameSpec * PulledNumbers * GameId
+    | PlayingStateReceived of GameSpec * PulledNumbers
+    | GameStartedChooseNumbers of GameSpec * GameId
     | PlayerChoseAllNumbers of PlayerStartingSummary list
     | BingoNumberClicked of number: int
+    | GameSpecChanged of numberOfChoices: string * gridSize: string
+    | SendGameSpec
+    | GameSpecSent
     | SendNumbersChosen
     | NumbersChosenSent
     | ChooseNumbersAccepted of PlayerChoices
@@ -67,6 +72,7 @@ type BGMsg =
     | GameOver of winners: Winners * pulledNumbers: PulledNumbers
 
 type BGServer = {
+    GameSpecification: GameMsgEnv<BingoGame.GameSpecification.Request> -> Fable.Core.JS.Promise<BGMsg>
     NumbersChosen: GameMsgEnv<BingoGame.NumbersChosen.Request> -> Fable.Core.JS.Promise<BGMsg>
     GameState: GameMsgEnv<string> -> Fable.Core.JS.Promise<BGMsg>
     StartPullingNumbers: GameMsgEnv<string> -> Fable.Core.JS.Promise<BGMsg>
@@ -85,6 +91,10 @@ let toGameEnv (gameInfo: GameInfo) msg =
 let getGameState (server: BGServer) (gameInfo: GameInfo) =
     let env = toGameEnv gameInfo "dummy"
     Cmd.OfPromise.perform (server.GameState) env (fun _ -> GameStateRequestSent)
+
+let sendGameSpec (server: BGServer) (gameInfo: GameInfo) (numChoices: int) (gridSize: int) =
+    let env = toGameEnv gameInfo { BingoGame.GameSpecification.Request.choicesRequired = numChoices; GameSpecification.Request.gridSize = gridSize; }
+    Cmd.OfPromise.perform (server.GameSpecification) env (fun _ -> GameSpecSent)
 
 let startPullingNumbers (server: BGServer) (gameInfo: GameInfo) =
     let env = toGameEnv gameInfo "dummy"
@@ -115,18 +125,27 @@ let getCellSelected pulledNumbersOpt playerChoicesOpt n =
     | _ -> 
         Unselected
 
-let getCells pulledNumbersOpt playerChoicesOpt (GameNumbers gameNumbers) (NumberOfChoices numOfChoices) =
+let getCells pulledNumbersOpt playerChoicesOpt (gameSpec: GameSpec) =
+    let (NumberOfChoices numberOfChoices) = gameSpec.Count
+    let (GameNumbers gameNumbers) = gameSpec.Numbers
     let hasWinningNumbers =
         match pulledNumbersOpt, playerChoicesOpt with
         | Some (PulledNumbers pulledNumbers), Some (PlayerChoices playerChoices) ->
             let i = Set.intersect pulledNumbers playerChoices
-            i.Count = numOfChoices
+            i.Count = numberOfChoices
         | _ -> false
     let cells = 
         gameNumbers
         |> Set.toList
         |> List.map (fun x -> x, getCellSelected pulledNumbersOpt playerChoicesOpt x )
     cells, hasWinningNumbers
+
+let tryParseInt v =
+    try
+        let i = int v
+        Some i
+    with
+        | _ -> None
 
 let bingoGameUpdateFromServer (server: BGServer) =
     let bingoGameUpdate: BGUpdate = fun msg (gameInfo, state) ->
@@ -135,8 +154,13 @@ let bingoGameUpdateFromServer (server: BGServer) =
             let model: BingoGame.NumbersChosen.Request = { playerChoicesArrayAsString = playerChoices.ToString(); }
             let msg = { msg = model; playerId = fromPlayerId gameInfo.PlayerId; gameId = fromGameId gameInfo.GameId; groupId = fromGroupId gameInfo.GroupId }
             Cmd.OfPromise.perform (server.NumbersChosen) msg (fun _ -> NumbersChosenSent)
-
-        let fakeNumberOfChoices = NumberOfChoices 0
+        
+        let (|ValidGameSpec|InvalidGameSpec|) (choices, gridSize) =
+            match tryParseInt choices, tryParseInt gridSize with
+            | Some choices, Some gridSize -> ValidGameSpec (choices, gridSize)
+            | None, Some _ -> InvalidGameSpec "Number of choices needs to be a number"
+            | Some _, None -> InvalidGameSpec "Grid size needs to be a number"
+            | _ -> InvalidGameSpec "Invalid numbers"
 
         match msg, state with
         | GameStateRequestSent, state ->
@@ -149,25 +173,40 @@ let bingoGameUpdateFromServer (server: BGServer) =
             // this is handled in the ModelUpdate
             reportError msg state
             state, Cmd.none
+        | GameSpecChanged (a, b), _ -> 
+            match a, b with
+            | ValidGameSpec _ -> LeaderChoosingGameSpec (a, b, None), Cmd.none
+            | InvalidGameSpec error -> LeaderChoosingGameSpec (a, b, Some error), Cmd.none
+        | SendGameSpec, state -> 
+            match state with
+            | LeaderChoosingGameSpec(numChoices, gridSize, _) ->
+                match numChoices, gridSize with
+                | ValidGameSpec (choices, size) -> LeaderChoosingGameSpec (numChoices, gridSize, None), sendGameSpec server gameInfo choices size
+                | InvalidGameSpec error -> LeaderChoosingGameSpec (numChoices, gridSize, Some error), Cmd.none
+            | _ -> 
+                reportError msg state
+                state, Cmd.none
+        | GameSpecSent, state -> state, Cmd.none
         | PlayerChoseAllNumbers playerSummary, state ->
             match state with
-            | ChoosingNumbers (numberOfChoices, gameNumbers, playerChoices, cells, _) ->
-                let newGame = ChoosingNumbers (numberOfChoices, gameNumbers, playerChoices, cells, playerSummary)
+            | ChoosingNumbers (gameSpec, playerChoices, cells, _) ->
+                let newGame = ChoosingNumbers (gameSpec, playerChoices, cells, playerSummary)
                 newGame, Cmd.none
-            | WaitingForGameToStart (numberOfChoices, gameNumbers, playerChoices, cells, _) ->
+            | WaitingForGameToStart (gameSpec, playerChoices, cells, _) ->
                 // this is triggered if other players choose all their numbers
-                let newGame = WaitingForGameToStart (numberOfChoices, gameNumbers, playerChoices, cells, playerSummary)
+                let newGame = WaitingForGameToStart (gameSpec, playerChoices, cells, playerSummary)
                 newGame, Cmd.none
-            | PlayingBingo (numberOfChoices, gameNumbers, playerChoices, cells, bingoCall) ->
+            | PlayingBingo (gameSpec, playerChoices, cells, bingoCall) ->
                 // not sure why this is triggered...
-                let newGame = PlayingBingo (numberOfChoices, gameNumbers, playerChoices, cells, bingoCall)
+                let newGame = PlayingBingo (gameSpec, playerChoices, cells, bingoCall)
                 newGame, Cmd.none
             | _ ->
                 reportError msg state
                 state, Cmd.none
         | BingoNumberClicked number, state ->
             match state with
-            | ChoosingNumbers ((NumberOfChoices numberOfChoices), gameNumbers, PlayerChoices playerChoices, _, playerSummary) ->
+            | ChoosingNumbers (gameSpec, PlayerChoices playerChoices, _, playerSummary) ->
+                let (NumberOfChoices numberOfChoices) = gameSpec.Count
                 let isNotAlreadyChosen = playerChoices.Contains number |> not
                 let newChoices =
                     if isNotAlreadyChosen && playerChoices.Count < numberOfChoices then
@@ -176,14 +215,14 @@ let bingoGameUpdateFromServer (server: BGServer) =
                         playerChoices.Remove number
                     |> PlayerChoices
 
-                let cells = getCells None (Some newChoices) gameNumbers (NumberOfChoices numberOfChoices)
-                let newGame = ChoosingNumbers ((NumberOfChoices numberOfChoices), gameNumbers, newChoices, cells, playerSummary)
+                let cells = getCells None (Some newChoices) gameSpec
+                let newGame = ChoosingNumbers (gameSpec, newChoices, cells, playerSummary)
                 newGame, Cmd.none
             | _ ->
                 state, Cmd.none
         | SendNumbersChosen, state ->
             match state with
-            | ChoosingNumbers (_, _, PlayerChoices playerChoices, _, _) ->
+            | ChoosingNumbers (_, PlayerChoices playerChoices, _, _) ->
                 state, sendNumbersChosen (Set.toArray playerChoices) server
             | _ ->
                 reportError msg state
@@ -191,9 +230,10 @@ let bingoGameUpdateFromServer (server: BGServer) =
         | NumbersChosenSent, state -> state, Cmd.none
         | ChooseNumbersAccepted playerChoices, state ->
             match state with
-            | ChoosingNumbers (numberOfChoices, gameNumbers, _, _, playerSummary) ->
-                let cells = getCells None (Some playerChoices) gameNumbers numberOfChoices
-                let newGame = WaitingForGameToStart (numberOfChoices, gameNumbers, playerChoices, cells, playerSummary)
+            | ChoosingNumbers (gameSpec, _, _, playerSummary) ->
+                let (NumberOfChoices numberOfChoices) = gameSpec.Count
+                let cells = getCells None (Some playerChoices) gameSpec
+                let newGame = WaitingForGameToStart (gameSpec, playerChoices, cells, playerSummary)
                 newGame, Cmd.none
             | _ ->
                 reportError msg state
@@ -205,33 +245,33 @@ let bingoGameUpdateFromServer (server: BGServer) =
         | StartPullingNumbersSent, state -> state, Cmd.none
         | SendPullNumber, state -> state, pullNumber server gameInfo
         | PullNumberSent, state -> state, Cmd.none
-        | PlayingStateReceived(gameNumbers, pulledNumbers), state ->
+        | PlayingStateReceived(gameSpec, pulledNumbers), state ->
             match state with
-            | WaitingForGameToStart (numberOfChoices, gameNumbers, playerChoices, _, _) ->
-                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameNumbers numberOfChoices
-                let newGame = PlayingBingo (numberOfChoices, gameNumbers, playerChoices, cells, None)
+            | WaitingForGameToStart (gameSpec, playerChoices, _, _) ->
+                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameSpec
+                let newGame = PlayingBingo (gameSpec, playerChoices, cells, None)
                 newGame, Cmd.none
-            | PlayingBingo (numberOfChoices, gameNumbers, playerChoices, _, _) ->
-                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameNumbers numberOfChoices
-                let newGame = PlayingBingo (numberOfChoices, gameNumbers, playerChoices, cells, None)
+            | PlayingBingo (gameSpec, playerChoices, _, _) ->
+                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameSpec
+                let newGame = PlayingBingo (gameSpec, playerChoices, cells, None)
                 newGame, Cmd.none
             | _ ->
-                let newGame = SittingOutAsMissedStart (gameNumbers, getCells (Some pulledNumbers) None gameNumbers fakeNumberOfChoices, None)
+                let newGame = SittingOutAsMissedStart (gameSpec, getCells (Some pulledNumbers) None gameSpec, None)
                 newGame, Cmd.none
         | NumberPulled (pulledNumbers, bingoCall), state ->
             let delayedOk = Cmd.OfAsync.perform delayed 2000 (fun _ -> UnHighlightBingoCall bingoCall.Number)
             match state with
-            | WaitingForGameToStart (numberOfChoices, gameNumbers, playerChoices, _, _) ->
-                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameNumbers numberOfChoices
-                let newGame = PlayingBingo (numberOfChoices, gameNumbers, playerChoices, cells, Some bingoCall)
+            | WaitingForGameToStart (gameSpec, playerChoices, _, _) ->
+                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameSpec
+                let newGame = PlayingBingo (gameSpec, playerChoices, cells, Some bingoCall)
                 newGame, delayedOk
-            | PlayingBingo (numberOfChoices, gameNumbers, playerChoices, _, _) ->
-                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameNumbers numberOfChoices
-                let newGame = PlayingBingo (numberOfChoices, gameNumbers, playerChoices, cells, Some bingoCall)
+            | PlayingBingo (gameSpec, playerChoices, _, _) ->
+                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameSpec
+                let newGame = PlayingBingo (gameSpec, playerChoices, cells, Some bingoCall)
                 newGame, delayedOk
-            | SittingOutAsMissedStart (gameNumbers, _, _) ->
-                let cells = getCells (Some pulledNumbers) None gameNumbers fakeNumberOfChoices
-                let newGame = SittingOutAsMissedStart (gameNumbers, cells, Some bingoCall)
+            | SittingOutAsMissedStart (gameSpec, _, _) ->
+                let cells = getCells (Some pulledNumbers) None gameSpec
+                let newGame = SittingOutAsMissedStart (gameSpec, cells, Some bingoCall)
                 newGame, delayedOk
             | _ ->
                 reportError msg state
@@ -246,22 +286,22 @@ let bingoGameUpdateFromServer (server: BGServer) =
                     else
                         Some existingCall
             match state with
-            | PlayingBingo (numberOfChoices, gameNumbers, playerChoices, boardCells, existing) ->
-                PlayingBingo (numberOfChoices, gameNumbers, playerChoices, boardCells, getNextState existing n), Cmd.none
-            | SittingOutAsMissedStart (gameNumbers, boardCells, existing) ->
-                SittingOutAsMissedStart (gameNumbers, boardCells, getNextState existing n), Cmd.none
+            | PlayingBingo (gameSpec, playerChoices, boardCells, existing) ->
+                PlayingBingo (gameSpec, playerChoices, boardCells, getNextState existing n), Cmd.none
+            | SittingOutAsMissedStart (gameSpec, boardCells, existing) ->
+                SittingOutAsMissedStart (gameSpec, boardCells, getNextState existing n), Cmd.none
             | _ -> state, Cmd.none
         | SendClaimWin, state -> state, claimWin server gameInfo
         | ClaimWinSent, state -> state, Cmd.none
         | GameOver (winners, pulledNumbers), state ->
             match state with
-            | PlayingBingo (numberOfChoices, gameNumbers, playerChoices, _, _) ->
-                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameNumbers numberOfChoices
-                let newGame = Finished (numberOfChoices, gameNumbers, cells, winners)
+            | PlayingBingo (gameSpec, playerChoices, _, _) ->
+                let cells = getCells (Some pulledNumbers) (Some playerChoices) gameSpec
+                let newGame = Finished (gameSpec, cells, winners)
                 newGame, Cmd.none
-            | SittingOutAsMissedStart (gameNumbers, _, _) ->
-                let cells = getCells (Some pulledNumbers) None gameNumbers fakeNumberOfChoices
-                let newGame = Finished (fakeNumberOfChoices, gameNumbers, cells, winners)
+            | SittingOutAsMissedStart (gameSpec, _, _) ->
+                let cells = getCells (Some pulledNumbers) None gameSpec
+                let newGame = Finished (gameSpec, cells, winners)
                 newGame, Cmd.none
             | _ ->
                 reportError msg state

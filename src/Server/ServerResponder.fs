@@ -45,13 +45,22 @@ type ClientResponder(HubContext: IHubContext<GameHub>) =
             let resp: Group.ChangeName.RejectedResponse = { error = msg.Error; name = name }
             HubContext.Clients.Client(connectionId).SendAsync("GroupChangeNameRejected", resp) |> ignore
 
-        member this.BingoGameStarted (BingoGame.GameStarted ((NumberOfChoices numberOfChoices), (GameNumbers gameNumbers), (PulledNumbers pulledNumbers), gameId)) (connectionId: ConnectionId) =
+        member this.BingoGameChoosingGameSpec (GameId gameId) (connectionId: ConnectionId) =
+            let connectionId = connectionId |> fromConnectionId
+            let msg: Group.ChooseGame.Response = { gameId = gameId }
+            HubContext.Clients.Client(connectionId).SendAsync("BingoGameChoosingGameSpec", msg) |> ignore
+
+        member this.BingoGameStarted (BingoGame.GameStarted ((gameSpec: GameSpec), (PulledNumbers pulledNumbers), gameId)) (connectionId: ConnectionId) =
+            let (NumberOfChoices numberOfChoices) = gameSpec.Count
+            let (GameNumbers gameNumbers) = gameSpec.Numbers
             let (GameId gameId) = gameId
             let msg: BingoGame.GameSpecification.Response = { choicesRequired = numberOfChoices; numbers = Set.toArray gameNumbers; gameId = gameId; pulledNumbers = Set.toArray pulledNumbers }
             let connectionId = connectionId |> fromConnectionId
             HubContext.Clients.Client(connectionId).SendAsync("BingoGameStarted", msg) |> ignore
             
-        member this.BingoGameHasStartedAndCantBeJoined (BingoGame.GameStarted ((NumberOfChoices numberOfChoices), (GameNumbers gameNumbers), (PulledNumbers pulledNumbers), gameId)) (connectionId: ConnectionId) =
+        member this.BingoGameHasStartedAndCantBeJoined (BingoGame.GameStarted ((gameSpec: GameSpec), (PulledNumbers pulledNumbers), gameId)) (connectionId: ConnectionId) =
+            let (NumberOfChoices numberOfChoices) = gameSpec.Count
+            let (GameNumbers gameNumbers) = gameSpec.Numbers
             let (GameId gameId) = gameId
             let msg: BingoGame.GameSpecification.Response = {  choicesRequired = numberOfChoices; numbers = Set.toArray gameNumbers; gameId = gameId; pulledNumbers = Set.toArray pulledNumbers }
             let connectionId = connectionId |> fromConnectionId
@@ -66,8 +75,10 @@ type ClientResponder(HubContext: IHubContext<GameHub>) =
             let connectionId = connectionId |> fromConnectionId
             HubContext.Clients.Client(connectionId).SendAsync("BingoGamePlayerChoseNumbers", msg) |> ignore
             
-        member this.BingoGamePlaying (BingoGame.PlayingBingo ((GameNumbers gameNumbers), (PulledNumbers pulled))) (connectionId: ConnectionId) =
-            let msg: BingoGame.Playing.During = { numbers = Set.toArray gameNumbers; pulledNumbers = Set.toArray pulled }
+        member this.BingoGamePlaying (BingoGame.PlayingBingo ((gameSpec: GameSpec), (PulledNumbers pulled))) (connectionId: ConnectionId) =
+            let (NumberOfChoices numberOfChoices) = gameSpec.Count
+            let (GameNumbers gameNumbers) = gameSpec.Numbers
+            let msg: BingoGame.Playing.During = { choicesRequired = numberOfChoices; numbers = Set.toArray gameNumbers; pulledNumbers = Set.toArray pulled }
             let connectionId = connectionId |> fromConnectionId
             HubContext.Clients.Client(connectionId).SendAsync("BingoGamePlaying", msg) |> ignore
             

@@ -12,7 +12,7 @@ open Shared.Domain.BingoGame
 type PlayingState =
     | NotConnectedToGroup
     | WaitingForLeaderToChooseGame of PlayerName list
-    | Bingo of GameInfo * NumberOfChoices * GameNumbers * BingoGame.BGState
+    | Bingo of GameInfo * BingoGame.BGState
 
 type GameGroupState =
     | Joining of JGState
@@ -66,6 +66,7 @@ let getServer (connection: HubConnection): Server =
             FinishGame = fun model -> connection.invoke("GroupFinishGame", toArgs model)
         }
         BGServer = {
+            GameSpecification = fun model -> connection.invoke("BingoGameSpecification", toArgs model)
             GameState = fun model -> connection.invoke("BingoGameState", toArgs model)
             NumbersChosen = fun model -> connection.invoke("BingoGameNumbersChosen", toArgs model)
             StartPullingNumbers = fun model -> connection.invoke("BingoGameStartPullingNumbers", toArgs model)
@@ -98,7 +99,7 @@ let updateFromServer (server: Server) =
         // this state is replaced with the game state
         let gameInfo = { GameId = gameId; GroupId = groupId; PlayerId = playerId }
         let cmd = getGameState server.BGServer gameInfo |> Cmd.map BingoChanged
-        { model with Play = Bingo (gameInfo, NumberOfChoices 1, GameNumbers Set.empty, GettingGameState) }, cmd
+        { model with Play = Bingo (gameInfo, GettingGameState) }, cmd
 
     let update: Update = fun (msg : Msg) (currentModel : Model) ->
         match msg, currentModel with
@@ -165,28 +166,36 @@ let updateFromServer (server: Server) =
                     | Joining _ ->
                         currentModel, Cmd.none
 
-        | BingoChanged(GameStartedChooseNumbers (numberOfChoices, gameNumbers, gameId)), state ->
+        | BingoChanged(GameStartedLeaderChooseGameSpec (gameId)), state ->
             let groupId = groupStateToIdUnsafe state.Group
             let playerId = groupStateToPlayerIdUnsafe state.Group
             let gameInfo = { GroupId = groupId; PlayerId = playerId; GameId = gameId }
-            let cells = getCells None (Some (PlayerChoices Set.empty)) gameNumbers numberOfChoices
-            let playingState = Bingo (gameInfo, numberOfChoices, gameNumbers, ChoosingNumbers (numberOfChoices, gameNumbers, PlayerChoices Set.empty, cells, []))
+            let numberCount = 5
+            let gridSize = 25
+            let playingState = Bingo (gameInfo, LeaderChoosingGameSpec (string numberCount, string gridSize, None))
             { state with Play = playingState }, Cmd.none
 
-        | BingoChanged(MissedGameStart (gameNumbers, pulledNumbers, gameId)), state ->
+        | BingoChanged(GameStartedChooseNumbers (gameSpec, gameId)), state ->
             let groupId = groupStateToIdUnsafe state.Group
             let playerId = groupStateToPlayerIdUnsafe state.Group
             let gameInfo = { GroupId = groupId; PlayerId = playerId; GameId = gameId }
-            let irrelevant = NumberOfChoices 1
-            let cells = getCells (Some pulledNumbers) None gameNumbers irrelevant
-            let playingState = Bingo (gameInfo, irrelevant, gameNumbers, SittingOutAsMissedStart (gameNumbers, cells, None))
+            let cells = getCells None (Some (PlayerChoices Set.empty)) gameSpec
+            let playingState = Bingo (gameInfo, ChoosingNumbers (gameSpec, PlayerChoices Set.empty, cells, []))
+            { state with Play = playingState }, Cmd.none
+
+        | BingoChanged(MissedGameStart (gameSpec, pulledNumbers, gameId)), state ->
+            let groupId = groupStateToIdUnsafe state.Group
+            let playerId = groupStateToPlayerIdUnsafe state.Group
+            let gameInfo = { GroupId = groupId; PlayerId = playerId; GameId = gameId }
+            let cells = getCells (Some pulledNumbers) None gameSpec
+            let playingState = Bingo (gameInfo, SittingOutAsMissedStart (gameSpec, cells, None))
             { state with Play = playingState }, Cmd.none
 
         | BingoChanged bgMsg, model ->
             match model.Play with
-            | Bingo (gameInfo, numberOfChoices, gameNumbers, bgState) ->
+            | Bingo (gameInfo, bgState) ->
                 bingoGameUpdate bgMsg (gameInfo, bgState)
-                |> fun (bgModel, cmd) -> { model with Play = Bingo (gameInfo, numberOfChoices, gameNumbers, bgModel) }, Cmd.map BingoChanged cmd
+                |> fun (bgModel, cmd) -> { model with Play = Bingo (gameInfo, bgModel) }, Cmd.map BingoChanged cmd
             | _ ->
                 reportError msg model
                 currentModel, Cmd.none

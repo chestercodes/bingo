@@ -58,6 +58,13 @@ html, body {
     border-radius: 20px;
     text-align: center;
     min-width: 2em;
+    
+    @media only screen 
+      //and (min-device-width: 320px) 
+      and (max-device-width: 480px) {
+        min-width: 0.8em;
+        font-size: 0.8em;
+    }
   }
 }
 

@@ -102,6 +102,23 @@ type GameHub () =
         |> sendToActor groupId connectionId this.GameHubActor
 
 
+    member this.BingoGameSpecification (msgEnv: GameMsgEnv<BingoGame.GameSpecification.Request>) =
+        logDebug(sprintf "BingoGameSpecification %s" this.Context.ConnectionId)   
+
+        let connectionId = this.Context.ConnectionId |> ConnectionId
+        let groupId = msgEnv.groupId |> GroupId
+        let gameId = msgEnv.gameId |> GameId
+        let source = getGameSource msgEnv.playerId connectionId
+
+        (msgEnv.msg.choicesRequired, msgEnv.msg.gridSize)
+        |> UnvalidatedGameSpec
+        |> GameActor.LeaderChosenSpec
+        |> GameActor.Msg.Bingo
+        |> GameActor.toMsg groupId gameId source
+        |> GroupRoomActor.GameMsg
+        |> sendToActor groupId connectionId this.GameHubActor
+
+
     member this.BingoGameNumbersChosen (msgEnv: GameMsgEnv<BingoGame.NumbersChosen.Request>) =
         logDebug(sprintf "NumbersChosen %s" this.Context.ConnectionId)   
 

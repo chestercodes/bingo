@@ -62,14 +62,17 @@ module Domain =
     module BingoGame =
         type PulledNumbers = PulledNumbers of int Set
         type NumberOfChoices = NumberOfChoices of int
+        type GameNumberCount = GameNumberCount of int
         type GameNumbers = GameNumbers of int Set
-        type GameStarted = GameStarted of NumberOfChoices * GameNumbers * PulledNumbers * GameId
+        type GameSpec = { Count: NumberOfChoices; Numbers: GameNumbers }
+        type GameStarted = GameStarted of GameSpec * PulledNumbers * GameId
         type Choice = Choice of int
         type UnvalidatedPlayersChoices = UnvalidatedPlayersChoices of int list
+        type UnvalidatedGameSpec = UnvalidatedGameSpec of int * int
         type PlayersChoices = PlayersChoices of int Set
         type PlayerStartingSummary = { PlayerName: PlayerName; HasChosen: bool }
         type PlayerChoseNumbers = PlayerChoseNumbers of PlayerStartingSummary list
-        type PlayingBingo = PlayingBingo of GameNumbers * PulledNumbers
+        type PlayingBingo = PlayingBingo of GameSpec * PulledNumbers
         type BingoCallMsg = BingoCallMsg of string
         type NumberPulled = NumberPulled of Choice * PulledNumbers * BingoCallMsg
         type FinishedBingo = FinishedBingo of isWinner: bool * PulledNumbers * PlayerName list
@@ -120,10 +123,13 @@ module DataTransfer =
     module BingoGame =
         
         module GameSpecification =
+            [<CLIMutable>]
+            type Request = { choicesRequired: int; gridSize: int; }
+
             type Response = { choicesRequired: int; numbers: int array; gameId: string; pulledNumbers: int array }
 
         module Playing =
-            type During = { numbers: int array; pulledNumbers: int array }
+            type During = { choicesRequired: int; numbers: int array; pulledNumbers: int array }
             type NumberPulled = { number: int; pulledNumbers: int array; bingoCall: string }
             type PlayerSummary = { playerName: string ; hasChosen: bool }
             type PlayerChoseNumbers = { players: PlayerSummary array }

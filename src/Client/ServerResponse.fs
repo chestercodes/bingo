@@ -97,8 +97,19 @@ let signalRSubscriptionFromConnection =
                     Log("StartedBingoGame")
                     let data = data :?> BingoGame.GameSpecification.Response |> log
 
-                    (data.choicesRequired |> NumberOfChoices, data.numbers |> Set.ofArray |> GameNumbers, data.gameId |> GameId)
+                    let gameSpec = { Numbers = data.numbers |> Set.ofArray |> GameNumbers; Count = data.choicesRequired |> NumberOfChoices }
+                    (gameSpec, data.gameId |> GameId)
                     |> BingoGame.BGMsg.GameStartedChooseNumbers
+                    |> BingoChanged
+                    |> dispatch
+                )
+
+                connection.on("BingoGameChoosingGameSpec", fun (data) ->
+                    Log("BingoGameChoosingGameSpec")
+                    let data = data :?> Group.ChooseGame.Response |> log
+
+                    (data.gameId |> GameId)
+                    |> BingoGame.BGMsg.GameStartedLeaderChooseGameSpec
                     |> BingoChanged
                     |> dispatch
                 )
@@ -107,7 +118,8 @@ let signalRSubscriptionFromConnection =
                     Log("BingoGameHasStartedAndCantBeJoined")
                     let data = data :?> BingoGame.GameSpecification.Response |> log
 
-                    (data.numbers |> Set.ofArray |> GameNumbers, data.pulledNumbers |> Set.ofArray |> PulledNumbers, data.gameId |> GameId)
+                    let gameSpec = { Numbers = data.numbers |> Set.ofArray |> GameNumbers; Count = data.choicesRequired |> NumberOfChoices }
+                    (gameSpec, data.pulledNumbers |> Set.ofArray |> PulledNumbers, data.gameId |> GameId)
                     |> BingoGame.BGMsg.MissedGameStart
                     |> toBingo
                 )
@@ -116,7 +128,8 @@ let signalRSubscriptionFromConnection =
                     Log("BingoGamePlaying")
                     let data = data :?> BingoGame.Playing.During |> log
 
-                    (data.numbers |> Set.ofArray |> GameNumbers, data.pulledNumbers |> Set.ofArray |> PulledNumbers)
+                    let gameSpec = { Numbers = data.numbers |> Set.ofArray |> GameNumbers; Count = data.choicesRequired |> NumberOfChoices }
+                    (gameSpec, data.pulledNumbers |> Set.ofArray |> PulledNumbers)
                     |> BingoGame.BGMsg.PlayingStateReceived
                     |> toBingo
                 )
