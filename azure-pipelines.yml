@@ -27,6 +27,6 @@ steps:
 - task: Docker@2
   inputs:
     containerRegistry: 'chestercodesDockerHub'
-    repository: 'games-room'
+    repository: 'chestercodes/games-room'
     command: 'buildAndPush'
     Dockerfile: 'Dockerfile'
