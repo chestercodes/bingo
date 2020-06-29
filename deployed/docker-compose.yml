@@ -1,0 +1,6 @@
+version: '3.8'
+services:
+  games-room:
+    image: "chestercodes/games-room:${GAMESROOMVERSION}"
+    ports:
+    - "80:8085"
